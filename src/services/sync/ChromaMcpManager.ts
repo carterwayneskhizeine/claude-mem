@@ -123,11 +123,14 @@ export class ChromaMcpManager {
     const spawnEnvironment = this.getSpawnEnv();
     getSupervisor().assertCanSpawn('chroma mcp');
 
+    // On Windows, spawn uvx directly (it ships as uvx.exe on newer uv installs).
+    // Using cmd.exe /c as an intermediary breaks MCP stdio: cmd.exe does not
+    // forward the pipe to the grandchild process in a way the MCP SDK expects,
+    // causing an immediate "Connection closed" before the handshake completes.
+    // Direct spawn avoids the shell entirely and lets Node own the pipe.
     const isWindows = process.platform === 'win32';
-    const uvxSpawnCommand = isWindows ? (process.env.ComSpec || 'cmd.exe') : 'uvx';
-    const uvxSpawnArgs = isWindows
-      ? ['/c', 'uvx', ...commandArgs.map(quoteForCmdExe)]
-      : commandArgs;
+    const uvxSpawnCommand = 'uvx';
+    const uvxSpawnArgs = commandArgs;
 
     logger.info('CHROMA_MCP', 'Connecting to chroma-mcp via MCP stdio', {
       command: uvxSpawnCommand,
