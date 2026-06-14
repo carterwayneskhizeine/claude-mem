@@ -1,4 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, afterAll, mock } from 'bun:test';
+import * as realInfrastructure from '../../src/services/infrastructure/index.js';
+import * as realSupervisor from '../../src/supervisor/index.js';
+
+const realInfrastructureSnapshot = { ...realInfrastructure };
+const realSupervisorSnapshot = { ...realSupervisor };
 
 // Record every HTTP call the worker layer makes, so we can assert whether a
 // restart was (or was not) issued. fetch is what workerHttpRequest ultimately
@@ -22,6 +27,10 @@ mock.module('../../src/supervisor/index.js', () => ({
   validateWorkerPidFile: () => 'alive',
 }));
 
+async function importWorkerUtilsFresh() {
+  return import(`../../src/shared/worker-utils.js?worker-utils-version-recycle=${Date.now()}-${Math.random()}`);
+}
+
 function installFetchMock(): void {
   fetchLog.length = 0;
   global.fetch = mock((url: string | URL | Request, init?: RequestInit) => {
@@ -31,11 +40,16 @@ function installFetchMock(): void {
 
     // /api/health and /api/readiness must report OK so the worker is "alive"
     // and "ready"; /api/admin/restart and anything else also returns OK.
+    // The health payload carries the PLUGIN version: the recycle path waits
+    // for a successor worker reporting the installed plugin's version on
+    // /api/health (the old worker spawns it after the port closes —
+    // src/services/worker-shutdown.ts), so this scripts "the successor came
+    // up immediately".
     return Promise.resolve({
       ok: true,
       status: 200,
       text: () => Promise.resolve(''),
-      json: () => Promise.resolve({}),
+      json: () => Promise.resolve({ version: versionMatchResult.pluginVersion }),
     } as unknown as Response);
   }) as unknown as typeof fetch;
 }
@@ -52,10 +66,15 @@ describe('ensureWorkerRunning — stale-worker recycle on version mismatch', () 
     mock.restore();
   });
 
+  afterAll(() => {
+    mock.module('../../src/services/infrastructure/index.js', () => realInfrastructureSnapshot);
+    mock.module('../../src/supervisor/index.js', () => realSupervisorSnapshot);
+  });
+
   it('POSTs /api/admin/restart when the running worker version differs', async () => {
     versionMatchResult = { matches: false, pluginVersion: '13.4.0', workerVersion: '13.3.0' };
 
-    const { ensureWorkerRunning } = await import('../../src/shared/worker-utils.js');
+    const { ensureWorkerRunning } = await importWorkerUtilsFresh();
     await ensureWorkerRunning();
 
     const restartCalls = fetchLog.filter(
@@ -67,7 +86,7 @@ describe('ensureWorkerRunning — stale-worker recycle on version mismatch', () 
   it('does NOT restart when versions match', async () => {
     versionMatchResult = { matches: true, pluginVersion: '13.4.0', workerVersion: '13.4.0' };
 
-    const { ensureWorkerRunning } = await import('../../src/shared/worker-utils.js');
+    const { ensureWorkerRunning } = await importWorkerUtilsFresh();
     await ensureWorkerRunning();
 
     const restartCalls = fetchLog.filter(c => c.url.includes('/api/admin/restart'));
