@@ -1,0 +1,10 @@
+# Generated credentials — contains plaintext API keys. NEVER commit.
+.server-credentials
+
+# Generated per-device client configs — each contains the shared API key.
+# Treat them like passwords; regenerate rather than commit.
+clients/
+
+# Local overrides
+.env
+.env.local
